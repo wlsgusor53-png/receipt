@@ -128,15 +128,41 @@ function removeFile(name) {
 function renderChips() {
   fileChips.innerHTML = files.map(f => `<div class="chip"><div class="chip-dot"></div><span>${f.name.length > 20 ? f.name.slice(0,20)+'...' : f.name}</span><span class="chip-x" onclick="removeFile('${f.name}')">×</span></div>`).join('');
 }
+
 async function fileToBase64(file) {
-  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+  return new Promise((res, rej) => {
+    if (file.type.startsWith('image/')) {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX = 1600;
+        let w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+          else { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        res(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.onerror = rej;
+      img.src = url;
+    } else {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    }
+  });
 }
+
 function getMediaType(file) {
   if (file.type === 'application/pdf') return 'application/pdf';
-  if (file.type === 'image/png') return 'image/png';
-  if (file.type === 'image/webp') return 'image/webp';
   return 'image/jpeg';
 }
+
 analyzeBtn.addEventListener('click', async () => {
   if (!files.length) return;
   errorMsg.style.display = 'none';
@@ -179,7 +205,9 @@ analyzeBtn.addEventListener('click', async () => {
     errorMsg.style.display = 'block';
   }
 });
+
 function formatKRW(n) { return '₩' + Math.round(n).toLocaleString('ko-KR'); }
+
 function renderResults(data) {
   loading.style.display = 'none';
   results.style.display = 'block';
@@ -191,20 +219,22 @@ function renderResults(data) {
   const netEl = document.getElementById('netAmount');
   netEl.textContent = formatKRW(Math.abs(net));
   netEl.style.color = net >= 0 ? 'var(--success)' : 'var(--danger)';
-  // 화면: 최신순 (내림차순)
   const screenSorted = [...data].sort((a, b) => new Date(b.date) - new Date(a.date));
   document.getElementById('tableBody').innerHTML = screenSorted.map(t => `<div class="table-row"><span class="date">${(t.date||'').slice(5)||'-'}</span><span>${t.description}</span><span class="category">${t.category}</span><span class="amount ${t.type}">${t.type==='income'?'+':'-'}${formatKRW(t.amount)}</span><span class="type-badge ${t.type==='income'?'in':'out'}">${t.type==='income'?'입금':'출금'}</span></div>`).join('');
 }
+
 function resetApp() {
   files = []; ledgerData = [];
   fileChips.innerHTML = '';
   analyzeBtn.disabled = true; analyzeBtn.style.display = 'flex';
   results.style.display = 'none'; errorMsg.style.display = 'none'; fileInput.value = '';
 }
+
 function showToast(msg) {
   const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
 }
+
 function exportPDF() {
   if (!ledgerData.length) return;
   try {
@@ -214,12 +244,11 @@ function exportPDF() {
     doc.setFontSize(18);
     doc.text('Hyeonjang Jangbu', 14, 22);
     doc.setFontSize(10); doc.setTextColor(130);
-    doc.text('Saengseong il: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
+    doc.text('Saengseong: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
     const income = ledgerData.filter(d => d.type === 'income').reduce((s, d) => s + d.amount, 0);
     const expense = ledgerData.filter(d => d.type === 'expense').reduce((s, d) => s + d.amount, 0);
     doc.setTextColor(0); doc.setFontSize(10);
-    doc.text('Ibgeum: +' + formatKRW(income) + '   Chulgeum: -' + formatKRW(expense) + '   Suniiik: ' + formatKRW(income-expense), 14, 38);
-    // PDF: 오래된순 (오름차순)
+    doc.text('Ibgeum: +' + formatKRW(income) + '   Chulgeum: -' + formatKRW(expense) + '   Suniik: ' + formatKRW(income - expense), 14, 38);
     const pdfSorted = [...ledgerData].sort((a, b) => new Date(a.date) - new Date(b.date));
     doc.autoTable({
       startY: 44,
@@ -236,7 +265,7 @@ function exportPDF() {
       alternateRowStyles: { fillColor: [245, 243, 239] },
       columnStyles: { 3: { halign: 'right' } }
     });
-    doc.save('장부_' + new Date().toISOString().slice(0,10) + '.pdf');
+    doc.save('장부_' + new Date().toISOString().slice(0, 10) + '.pdf');
     showToast('PDF가 저장됐어요 ✓');
   } catch(e) { showToast('PDF 저장 오류: ' + e.message); }
 }
