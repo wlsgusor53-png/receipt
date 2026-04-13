@@ -136,7 +136,7 @@ async function fileToBase64(file) {
       const url = URL.createObjectURL(file);
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX = 1600;
+        const MAX = 800;
         let w = img.width, h = img.height;
         if (w > MAX || h > MAX) {
           if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -145,14 +145,20 @@ async function fileToBase64(file) {
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        res(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+        const b64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+        if (!b64) { rej(new Error('이미지 변환 실패')); return; }
+        res(b64);
       };
-      img.onerror = rej;
+      img.onerror = () => rej(new Error('이미지 로드 실패: ' + file.name));
       img.src = url;
     } else {
       const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = rej;
+      r.onload = () => {
+        const b64 = r.result.split(',')[1];
+        if (!b64) { rej(new Error('파일 변환 실패')); return; }
+        res(b64);
+      };
+      r.onerror = () => rej(new Error('파일 읽기 실패: ' + file.name));
       r.readAsDataURL(file);
     }
   });
@@ -242,13 +248,13 @@ function exportPDF() {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     doc.setFont('helvetica');
     doc.setFontSize(18);
-    doc.text('Hyeonjang Jangbu', 14, 22);
+    doc.text('Construction Ledger', 14, 22);
     doc.setFontSize(10); doc.setTextColor(130);
-    doc.text('Saengseong: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
+    doc.text('Date: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
     const income = ledgerData.filter(d => d.type === 'income').reduce((s, d) => s + d.amount, 0);
     const expense = ledgerData.filter(d => d.type === 'expense').reduce((s, d) => s + d.amount, 0);
     doc.setTextColor(0); doc.setFontSize(10);
-    doc.text('Ibgeum: +' + formatKRW(income) + '   Chulgeum: -' + formatKRW(expense) + '   Suniik: ' + formatKRW(income - expense), 14, 38);
+    doc.text('Income: +' + formatKRW(income) + '   Expense: -' + formatKRW(expense) + '   Net: ' + formatKRW(income - expense), 14, 38);
     const pdfSorted = [...ledgerData].sort((a, b) => new Date(a.date) - new Date(b.date));
     doc.autoTable({
       startY: 44,
