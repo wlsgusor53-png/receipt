@@ -191,8 +191,9 @@ function renderResults(data) {
   const netEl = document.getElementById('netAmount');
   netEl.textContent = formatKRW(Math.abs(net));
   netEl.style.color = net >= 0 ? 'var(--success)' : 'var(--danger)';
-  const sorted = [...data].sort((a, b) => new Date(b.date) - new Date(a.date));
-  document.getElementById('tableBody').innerHTML = sorted.map(t => `<div class="table-row"><span class="date">${(t.date||'').slice(5)||'-'}</span><span>${t.description}</span><span class="category">${t.category}</span><span class="amount ${t.type}">${t.type==='income'?'+':'-'}${formatKRW(t.amount)}</span><span class="type-badge ${t.type==='income'?'in':'out'}">${t.type==='income'?'입금':'출금'}</span></div>`).join('');
+  // 화면: 최신순 (내림차순)
+  const screenSorted = [...data].sort((a, b) => new Date(b.date) - new Date(a.date));
+  document.getElementById('tableBody').innerHTML = screenSorted.map(t => `<div class="table-row"><span class="date">${(t.date||'').slice(5)||'-'}</span><span>${t.description}</span><span class="category">${t.category}</span><span class="amount ${t.type}">${t.type==='income'?'+':'-'}${formatKRW(t.amount)}</span><span class="type-badge ${t.type==='income'?'in':'out'}">${t.type==='income'?'입금':'출금'}</span></div>`).join('');
 }
 function resetApp() {
   files = []; ledgerData = [];
@@ -209,13 +210,32 @@ function exportPDF() {
   try {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    doc.setFont('helvetica'); doc.setFontSize(18); doc.text('Construction Ledger', 14, 22);
-    doc.setFontSize(10); doc.setTextColor(130); doc.text('Generated: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
+    doc.setFont('helvetica');
+    doc.setFontSize(18);
+    doc.text('Hyeonjang Jangbu', 14, 22);
+    doc.setFontSize(10); doc.setTextColor(130);
+    doc.text('Saengseong il: ' + new Date().toLocaleDateString('ko-KR'), 14, 30);
     const income = ledgerData.filter(d => d.type === 'income').reduce((s, d) => s + d.amount, 0);
     const expense = ledgerData.filter(d => d.type === 'expense').reduce((s, d) => s + d.amount, 0);
     doc.setTextColor(0); doc.setFontSize(10);
-    doc.text('Income: +' + formatKRW(income) + '   Expense: -' + formatKRW(expense) + '   Net: ' + formatKRW(income-expense), 14, 38);
-    doc.autoTable({ startY: 44, head: [['Date','Description','Category','Amount','Type']], body: [...ledgerData].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(t=>[t.date||'-',t.description,t.category,(t.type==='income'?'+':'-')+formatKRW(t.amount),t.type==='income'?'Income':'Expense']), styles:{fontSize:9,cellPadding:3}, headStyles:{fillColor:[26,24,20],textColor:255}, alternateRowStyles:{fillColor:[245,243,239]}, columnStyles:{3:{halign:'right'}} });
+    doc.text('Ibgeum: +' + formatKRW(income) + '   Chulgeum: -' + formatKRW(expense) + '   Suniiik: ' + formatKRW(income-expense), 14, 38);
+    // PDF: 오래된순 (오름차순)
+    const pdfSorted = [...ledgerData].sort((a, b) => new Date(a.date) - new Date(b.date));
+    doc.autoTable({
+      startY: 44,
+      head: [['날짜', '내용', '분류', '금액', '구분']],
+      body: pdfSorted.map(t => [
+        t.date || '-',
+        t.description,
+        t.category,
+        (t.type === 'income' ? '+' : '-') + formatKRW(t.amount),
+        t.type === 'income' ? '입금' : '출금'
+      ]),
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [26, 24, 20], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 239] },
+      columnStyles: { 3: { halign: 'right' } }
+    });
     doc.save('장부_' + new Date().toISOString().slice(0,10) + '.pdf');
     showToast('PDF가 저장됐어요 ✓');
   } catch(e) { showToast('PDF 저장 오류: ' + e.message); }
