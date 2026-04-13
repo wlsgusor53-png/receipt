@@ -28,13 +28,19 @@
   .file-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   .chip { display: flex; align-items: center; gap: 6px; background: var(--surface); border: 0.5px solid var(--border); border-radius: 20px; padding: 5px 12px 5px 10px; font-size: 12px; }
   .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .chip-dot.done { background: var(--success); }
+  .chip-dot.error { background: var(--danger); }
   .chip-x { color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; }
   .chip-x:hover { color: var(--danger); }
   .analyze-btn { width: 100%; background: var(--text); color: #fff; border: none; border-radius: 12px; padding: 16px; font-size: 15px; font-family: var(--sans); font-weight: 500; cursor: pointer; transition: opacity 0.15s; margin-bottom: 28px; display: flex; align-items: center; justify-content: center; gap: 8px; }
   .analyze-btn:hover { opacity: 0.85; }
   .analyze-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .loading { text-align: center; padding: 40px; display: none; }
-  .spinner { width: 36px; height: 36px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 14px; }
+  .progress-wrap { margin-bottom: 20px; display: none; }
+  .progress-label { font-size: 13px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .progress-bar-bg { background: var(--border); border-radius: 99px; height: 6px; overflow: hidden; }
+  .progress-bar { background: var(--accent); height: 6px; border-radius: 99px; transition: width 0.3s; width: 0%; }
+  .loading { text-align: center; padding: 20px; display: none; }
+  .spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading p { font-size: 13px; color: var(--muted); }
   .results { display: none; }
@@ -81,6 +87,13 @@
 <div class="file-chips" id="fileChips"></div>
 <button class="analyze-btn" id="analyzeBtn" disabled><span>🔍</span> 장부로 변환하기</button>
 <div class="error-msg" id="errorMsg"></div>
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-label">
+    <span id="progressText">분석 중...</span>
+    <span id="progressCount">0 / 0</span>
+  </div>
+  <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+</div>
 <div class="loading" id="loading">
   <div class="spinner"></div>
   <p id="loadingText">서류를 분석하고 있어요...</p>
@@ -111,6 +124,10 @@ const analyzeBtn = document.getElementById('analyzeBtn');
 const loading = document.getElementById('loading');
 const results = document.getElementById('results');
 const errorMsg = document.getElementById('errorMsg');
+const progressWrap = document.getElementById('progressWrap');
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+const progressCount = document.getElementById('progressCount');
 
 uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
 uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
@@ -125,8 +142,12 @@ function removeFile(name) {
   files = files.filter(f => f.name !== name);
   renderChips(); analyzeBtn.disabled = files.length === 0;
 }
-function renderChips() {
-  fileChips.innerHTML = files.map(f => `<div class="chip"><div class="chip-dot"></div><span>${f.name.length > 20 ? f.name.slice(0,20)+'...' : f.name}</span><span class="chip-x" onclick="removeFile('${f.name}')">×</span></div>`).join('');
+function renderChips(statuses = {}) {
+  fileChips.innerHTML = files.map(f => {
+    const s = statuses[f.name];
+    const dotClass = s === 'done' ? 'done' : s === 'error' ? 'error' : '';
+    return `<div class="chip"><div class="chip-dot ${dotClass}"></div><span>${f.name.length > 20 ? f.name.slice(0,20)+'...' : f.name}</span>${!s ? `<span class="chip-x" onclick="removeFile('${f.name}')">×</span>` : ''}</div>`;
+  }).join('');
 }
 
 async function fileToBase64(file) {
@@ -153,11 +174,7 @@ async function fileToBase64(file) {
       img.src = url;
     } else {
       const r = new FileReader();
-      r.onload = () => {
-        const b64 = r.result.split(',')[1];
-        if (!b64) { rej(new Error('파일 변환 실패')); return; }
-        res(b64);
-      };
+      r.onload = () => { const b64 = r.result.split(',')[1]; if (!b64) { rej(new Error('파일 변환 실패')); return; } res(b64); };
       r.onerror = () => rej(new Error('파일 읽기 실패: ' + file.name));
       r.readAsDataURL(file);
     }
@@ -169,47 +186,69 @@ function getMediaType(file) {
   return 'image/jpeg';
 }
 
+async function analyzeOne(file) {
+  const b64 = await fileToBase64(file);
+  const mt = getMediaType(file);
+  const contentParts = [];
+  if (mt === 'application/pdf') {
+    contentParts.push({ type: 'document', source: { type: 'base64', media_type: mt, data: b64 } });
+  } else {
+    contentParts.push({ type: 'image', source: { type: 'base64', media_type: mt, data: b64 } });
+  }
+  contentParts.push({ type: 'text', text: `파일명: ${file.name}\n\n위 파일은 건설/시공 현장의 영수증, 세금계산서, 거래명세서입니다. 거래 내역을 추출해서 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.\n\n{"transactions":[{"date":"YYYY-MM-DD","description":"거래 내용 (15자 이내)","category":"자재비/노무비/장비비/용역비/기타수입/기타지출 중 하나","amount":숫자만,"type":"income 또는 expense"}]}\n\n날짜 불명확하면 오늘 날짜. 금액은 부가세 포함 최종금액. 입금/수입이면 income, 지출/구매면 expense.` });
+
+  const response = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: contentParts }] })
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  const raw = data.content?.[0]?.text || '';
+  const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+  return parsed.transactions || [];
+}
+
 analyzeBtn.addEventListener('click', async () => {
   if (!files.length) return;
   errorMsg.style.display = 'none';
   analyzeBtn.style.display = 'none';
   loading.style.display = 'block';
   results.style.display = 'none';
-  const loadingTexts = ['서류를 분석하고 있어요...', '금액과 날짜를 추출하고 있어요...', '장부로 정리하고 있어요...'];
-  let li = 0;
-  const lt = setInterval(() => { document.getElementById('loadingText').textContent = loadingTexts[li++ % loadingTexts.length]; }, 2200);
-  try {
-    const contentParts = [];
-    for (const file of files) {
-      const b64 = await fileToBase64(file);
-      const mt = getMediaType(file);
-      if (mt === 'application/pdf') {
-        contentParts.push({ type: 'document', source: { type: 'base64', media_type: mt, data: b64 } });
-      } else {
-        contentParts.push({ type: 'image', source: { type: 'base64', media_type: mt, data: b64 } });
-      }
-      contentParts.push({ type: 'text', text: `파일명: ${file.name}` });
+  progressWrap.style.display = 'block';
+  ledgerData = [];
+  const statuses = {};
+  const total = files.length;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    progressText.textContent = `"${file.name.slice(0,15)}" 분석 중...`;
+    progressCount.textContent = `${i + 1} / ${total}`;
+    progressBar.style.width = `${Math.round((i / total) * 100)}%`;
+    document.getElementById('loadingText').textContent = `${i + 1}번째 서류 분석 중...`;
+
+    try {
+      const txns = await analyzeOne(file);
+      ledgerData.push(...txns);
+      statuses[file.name] = 'done';
+    } catch (err) {
+      statuses[file.name] = 'error';
+      console.warn('오류:', file.name, err.message);
     }
-    contentParts.push({ type: 'text', text: `위 파일들은 건설/시공 현장의 영수증, 세금계산서, 거래명세서입니다. 각 서류에서 거래 내역을 추출해서 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.\n\n{"transactions":[{"date":"YYYY-MM-DD","description":"거래 내용 (15자 이내)","category":"자재비/노무비/장비비/용역비/기타수입/기타지출 중 하나","amount":숫자만,"type":"income 또는 expense"}]}\n\n날짜 불명확하면 오늘 날짜. 금액은 부가세 포함 최종금액. 입금/수입이면 income, 지출/구매면 expense.` });
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: contentParts }] })
-    });
-    const data = await response.json();
-    clearInterval(lt);
-    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    const raw = data.content?.[0]?.text || '';
-    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-    ledgerData = parsed.transactions || [];
-    renderResults(ledgerData);
-  } catch (err) {
-    clearInterval(lt);
-    loading.style.display = 'none';
-    analyzeBtn.style.display = 'flex';
-    errorMsg.textContent = '분석 중 오류가 발생했어요: ' + err.message;
-    errorMsg.style.display = 'block';
+    renderChips(statuses);
   }
+
+  progressBar.style.width = '100%';
+  progressCount.textContent = `${total} / ${total}`;
+  loading.style.display = 'none';
+
+  if (ledgerData.length === 0) {
+    errorMsg.textContent = '분석된 거래 내역이 없어요. 파일을 다시 확인해주세요.';
+    errorMsg.style.display = 'block';
+    analyzeBtn.style.display = 'flex';
+    return;
+  }
+  renderResults(ledgerData);
 });
 
 function formatKRW(n) { return '₩' + Math.round(n).toLocaleString('ko-KR'); }
@@ -233,7 +272,9 @@ function resetApp() {
   files = []; ledgerData = [];
   fileChips.innerHTML = '';
   analyzeBtn.disabled = true; analyzeBtn.style.display = 'flex';
-  results.style.display = 'none'; errorMsg.style.display = 'none'; fileInput.value = '';
+  results.style.display = 'none'; errorMsg.style.display = 'none';
+  progressWrap.style.display = 'none'; progressBar.style.width = '0%';
+  fileInput.value = '';
 }
 
 function showToast(msg) {
@@ -259,13 +300,7 @@ function exportPDF() {
     doc.autoTable({
       startY: 44,
       head: [['날짜', '내용', '분류', '금액', '구분']],
-      body: pdfSorted.map(t => [
-        t.date || '-',
-        t.description,
-        t.category,
-        (t.type === 'income' ? '+' : '-') + formatKRW(t.amount),
-        t.type === 'income' ? '입금' : '출금'
-      ]),
+      body: pdfSorted.map(t => [t.date||'-', t.description, t.category, (t.type==='income'?'+':'-')+formatKRW(t.amount), t.type==='income'?'입금':'출금']),
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [26, 24, 20], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 243, 239] },
